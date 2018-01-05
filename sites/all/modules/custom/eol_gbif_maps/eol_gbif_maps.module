@@ -1,0 +1,91 @@
+<?php
+
+/**
+ * Implementation of hook_gm3_alter().
+ */
+function eol_gbif_maps_gm3_map_alter(&$map){
+  // We add special data to a google map on taxonomy term pages only.
+  //if($term = menu_get_object('taxonomy_term', 2) && $map['id'] == 'gm3-map'){
+  if(($term = menu_get_object('taxonomy_term', 2)) != FALSE){
+    // Now we need to calculate the GBIF taxon id for this term name, and then
+    // add the gbif library to the map.
+    // First we check to see if we've loaded this term before, and if so, we
+    // use that data.
+    $col = db_select('eol_gbif_maps_tid_map', 'e')->fields('e')->condition('tid', arg(2))->execute()->fetchCol(1);
+    if(count($col)){
+      $map['libraries']['eol_gbif_maps_overlay'] = array(
+        'module' => 'eol_gbif_maps',
+        'taxon_id' => array_pop($col)
+      );
+    }else{
+      $request = drupal_http_request('http://api.gbif.org/v1/species?name=' . $term->name, array(
+        'timeout' => 3
+      ));
+      if($request->code == 200){
+        $json = json_decode($request->data, TRUE);
+        if($json && !empty($json['results'][0]['nubKey'])){
+          $id = $json['results'][0]['nubKey'];
+          db_insert('eol_gbif_maps_tid_map')->fields(array(
+            'tid' => $term->tid,
+            'taxon_id' => "$id"
+          ))->execute();
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implementation of hook_taxonomy_term_update().
+ */
+function eol_gbif_maps_taxonomy_term_update($term){
+  db_delete('eol_gbif_maps_tid_map')->condition('tid', $term->tid)->execute();
+}
+
+/**
+ * Implementation of hook_taxonomy_term_delete($term).
+ */
+function eol_gbif_maps_taxonomy_term_delete($term){
+  eol_gbif_maps_taxonomy_term_update($term);
+}
+
+/**
+ * Implementation of hook_library().
+ */
+function eol_gbif_maps_library(){
+  return array(
+    'eol_gbif_maps_overlay' => array(
+      'title' => t('GBIF taxon data overlay'),
+      'website' => 'http://eol.org/',
+      'version' => '1',
+      'js' => array(
+        array(
+          'data' => drupal_get_path('module', 'eol_gbif_maps') . "/js/eol_gbif_maps.js"
+        ),
+        array(
+          'data' => array(
+            'gm3' => array(
+              'settings' => array(
+                'eol_gbif_maps' => array(
+                  'tile_url' => ' http://api.gbif.org/v1/map/density/tile?type=TAXON&key='
+                )
+              )
+            )
+          ),
+          'type' => 'setting'
+        )
+      ),
+      'css' => array(
+        array(
+          'data' => drupal_get_path('module', 'eol_gbif_maps') . '/css/eol_gbif_maps.css'
+        )
+      ),
+      'dependencies' => array(
+        array(
+          'gm3',
+          'gm3'
+        )
+      )
+    )
+  );
+}

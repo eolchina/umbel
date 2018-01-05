@@ -1,0 +1,112 @@
+<?php
+
+/**
+ * Implements hook_block_info().
+ */
+function refindit_block_info(){
+  return array(
+    'default' => array(
+      'info' => t('ReFindit Species Page Block'),
+      'cache' => DRUPAL_CACHE_PER_PAGE,
+      'pages' => 'taxonomy/term/*/literature',
+      'visibility' => BLOCK_VISIBILITY_LISTED,
+      'status' => 1,
+      'region' => 'content',
+      'weight' => 100
+    )
+  );
+}
+
+/**
+ * Implements hook_flush_caches()
+ */
+function refindit_flush_caches(){
+  if(function_exists('varnish_purge')){
+    varnish_purge(_varnish_get_host(), 'ajaxblocks');
+  }
+  return array(
+    'cache_refindit'
+  );
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function refindit_block_view($delta = ''){
+  // We load the term from the menu
+  $term = menu_get_object('taxonomy_term', 2);
+  $content = array(
+    'subject' => t('ReFindit'),
+    'content' => array(
+      '#markup' => '<p>' . t('Unable to fetch references from @name.', array(
+        '@name' => 'ReFindit'
+      )) . '</p>'
+    )
+  );
+  if($term){
+    if(!function_exists('ajaxblocks_in_ajax_handler') || (function_exists('ajaxblocks_in_ajax_handler') && ajaxblocks_in_ajax_handler())){
+      $cache = cache_get($term->tid, 'cache_refindit');
+      if($cache->data){
+        $content['content']['#markup'] = $cache->data;
+      }else{
+        $items = array();
+        $request = drupal_http_request('http://refinder.org/find?search=simple&text=' . urlencode($term->name), array(
+          'timeout' => 5
+        ));
+        if($request->code == 200){
+          if(($results = json_decode(str_replace('][', ',', $request->data))) != FALSE){
+            for($i = 0; $i < 20; $i++){
+              if(empty($results[$i])){
+                break;
+              }
+              $items[] = array(
+                'data' => '<a target="_blank" href="' . (isset($results[$i]->href) ? $results[$i]->href : $results[$i]->infoUrl) . '">' . (isset($results[$i]->fullCitation) ? $results[$i]->fullCitation : $results[$i]->title) . '</a>',
+                'style' => 'list-style:disc;padding-bottom:3px;'
+              );
+            }
+            if(count($items)){
+              $block_content = array(
+                'list' => array(
+                  '#theme' => 'item_list',
+                  '#items' => $items
+                ),
+                'link_to_gscholar' => array(
+                  '#markup' => '<p><strong>' . l(t('View results on ReFindit'), 'http://refindit.org/?search=simple&text=' . urlencode($term->name), array(
+                    'attributes' => array(
+                      'target' => '_blank'
+                    )
+                  )) . '</strong></p>'
+                )
+              );
+              $content['content']['#markup'] = drupal_render($block_content);
+              cache_set($term->tid, $content['content']['#markup'], 'cache_refindit');
+            }
+          }
+        }
+      }
+    }
+  }
+  return $content;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter()
+ */
+function refindit_form_block_admin_configure_alter(&$form, &$form_state, $form_id){
+  if($form['module']['#value'] == 'refindit'){
+    // Prevent editing of this block.
+    if(!user_access('scratchpad team')){
+      drupal_set_message(t('You may not edit the Google Scholar block'));
+      drupal_goto();
+    }
+  }
+}
+
+/**
+ * Implements hook_contextual_links_view_alter().
+ */
+function refindit_contextual_links_view_alter(&$element, $items){
+  if(@isset($element['#contextual_links']['block'][1][0]) && $element['#contextual_links']['block'][1][0] == 'refindit' && !user_access('scratchpad team')){
+    $element = array();
+  }
+}
